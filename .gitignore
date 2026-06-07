@@ -1,0 +1,7 @@
+node_modules
+dist
+*.tsbuildinfo
+
+# Remember to uncomment the .env after cloning!
+.env
+placeholder.md
