@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import type { LoginUserBody } from '../types/auth.types.js';
 import type { RegisterUserBody } from '../types/user.types.js';
 
 const MIN_PASSWORD_LENGTH = 8;
@@ -19,6 +20,24 @@ export function validateRegister(req: Request, res: Response, next: NextFunction
   }
   if (password.length < MIN_PASSWORD_LENGTH) {
     return res.status(400).json({ message: 'password must be at least 8 characters' });
+  }
+
+  return next();
+}
+
+export function validateLogin(req: Request, res: Response, next: NextFunction) {
+  if (!req.body) return res.status(400).json({ message: 'body is required' });
+
+  const { email, password } = req.body as Partial<LoginUserBody>;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'email and password are required' });
+  }
+  if (typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ message: 'email and password must be strings' });
+  }
+  if (!email.trim() || !password.trim()) {
+    return res.status(400).json({ message: 'email and password cannot be empty' });
   }
 
   return next();
