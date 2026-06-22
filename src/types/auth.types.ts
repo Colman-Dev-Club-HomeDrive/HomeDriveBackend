@@ -3,7 +3,12 @@ export type JwtPayload = {
   email: string;
 };
 
-export type AuthRegisterResponse = {
+export type LoginUserBody = {
+  email: string;
+  password: string;
+};
+
+export type AuthTokenResponse = {
   success: true;
   token: string;
   user: {
@@ -12,3 +17,5 @@ export type AuthRegisterResponse = {
     email: string;
   };
 };
+
+export type AuthRegisterResponse = AuthTokenResponse;
