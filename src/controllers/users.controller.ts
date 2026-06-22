@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { UserModel } from '../models/User.model.js';
 import type { ObjectIdParams } from '../types/common.types.js';
-import type { CreateUserBody } from '../types/user.types.js';
+import type { RegisterUserBody } from '../types/user.types.js';
 
 export async function listUsers(_req: Request, res: Response) {
   try {
@@ -27,13 +27,12 @@ export async function getUserById(req: Request, res: Response) {
   }
 }
 
-export async function createUser(req: Request, res: Response) {
+export async function registerUser(req: Request, res: Response) {
   try {
-    const { email, name } = req.body as CreateUserBody;
-    const created = await UserModel.create({ email, name, posts: [] });
+    const { email, name, password } = req.body as RegisterUserBody;
+    const created = await UserModel.create({ email, name, password, posts: [] });
     return res.status(201).json(created);
   } catch (err: any) {
-    // duplicate email
     if (err?.code === 11000) {
       return res.status(409).json({ message: 'email already exists' });
     }

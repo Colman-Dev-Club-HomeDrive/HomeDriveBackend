@@ -13,6 +13,24 @@ export async function startServer(app: Express, port: number): Promise<Server> {
   });
 }
 
+export function resolveMongoUri(): string {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    throw new Error('MONGODB_URI is not set');
+  }
+
+  if (!uri.includes('<db_password>')) {
+    return uri;
+  }
+
+  const password = process.env.DB_PASSWORD;
+  if (!password) {
+    throw new Error('DB_PASSWORD is not set (required to resolve MONGODB_URI placeholder)');
+  }
+
+  return uri.replace('<db_password>', encodeURIComponent(password));
+}
+
 export async function connectToMongoDB(uri: string): Promise<void> {
   try {
     console.log('❔ Connecting to MongoDB...');

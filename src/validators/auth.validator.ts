@@ -1,18 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
-import mongoose from 'mongoose';
-import type { ObjectIdParams } from '../types/common.types.js';
 import type { RegisterUserBody } from '../types/user.types.js';
 
-export function validateUserId(req: Request, res: Response, next: NextFunction) {
-  const { id } = req.params as Partial<ObjectIdParams>;
-  if (!mongoose.isValidObjectId(id)) {
-    return res.status(400).json({ message: 'invalid user id' });
-  }
+const MIN_PASSWORD_LENGTH = 8;
 
-  return next();
-}
-
-export function validateRegisterUser(req: Request, res: Response, next: NextFunction) {
+export function validateRegister(req: Request, res: Response, next: NextFunction) {
   if (!req.body) return res.status(400).json({ message: 'body is required' });
 
   const { email, name, password } = req.body as Partial<RegisterUserBody>;
@@ -25,6 +16,9 @@ export function validateRegisterUser(req: Request, res: Response, next: NextFunc
   }
   if (!email.trim() || !name.trim() || !password.trim()) {
     return res.status(400).json({ message: 'email, name, and password cannot be empty' });
+  }
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return res.status(400).json({ message: 'password must be at least 8 characters' });
   }
 
   return next();
