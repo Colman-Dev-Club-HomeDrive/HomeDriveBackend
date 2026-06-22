@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { connectToMongoDB, startServer } from './utils.js';
 import { usersRouter } from './routes/users.routes.js';
 import { postsRouter } from './routes/posts.routes.js';
+import { workspacesRouter } from './routes/workspace.routes.js';
 import cors from 'cors';
 import helmet from 'helmet';
 // create a new express application
@@ -36,6 +37,7 @@ apiRouter.get('/health', (_req, res) => {
 
 apiRouter.use('/users', usersRouter);
 apiRouter.use('/posts', postsRouter);
+apiRouter.use('/workspaces', workspacesRouter);
 
 app.use('/api', apiRouter);
 
