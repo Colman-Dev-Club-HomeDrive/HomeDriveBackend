@@ -1,5 +1,5 @@
-export type CreateUserBody = {
+export type RegisterUserBody = {
   email: string;
   name: string;
+  password: string;
 };
-
