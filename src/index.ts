@@ -1,6 +1,7 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import 'dotenv/config';
-import { connectToMongoDB, startServer } from './utils.js';
+import { connectToMongoDB, resolveMongoUri, startServer } from './utils.js';
+import { authRouter } from './routes/auth.routes.js';
 import { usersRouter } from './routes/users.routes.js';
 import { postsRouter } from './routes/posts.routes.js';
 import { workspacesRouter } from './routes/workspace.routes.js';
@@ -32,6 +33,7 @@ apiRouter.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
+apiRouter.use('/auth', authRouter);
 apiRouter.use('/users', usersRouter);
 apiRouter.use('/posts', postsRouter);
 apiRouter.use('/workspaces', workspacesRouter);
@@ -49,13 +51,9 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 // get the port and uri from the environment variables
 const port = Number(process.env.PORT) || 3000;
-const uri = process.env.MONGODB_URI;
-
 // main function to start the server
 async function main() {
-  if (!uri) throw new Error('MONGODB_URI is not set');
-
-  await connectToMongoDB(uri);
+  await connectToMongoDB(resolveMongoUri());
 
   await startServer(app, port);
   console.log(`✅ Server is running on port ${port}! 🚀`);

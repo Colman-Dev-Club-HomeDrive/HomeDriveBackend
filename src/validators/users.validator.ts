@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import mongoose from 'mongoose';
 import type { ObjectIdParams } from '../types/common.types.js';
-import type { CreateUserBody } from '../types/user.types.js';
+import type { RegisterUserBody } from '../types/user.types.js';
 
 export function validateUserId(req: Request, res: Response, next: NextFunction) {
   const { id } = req.params as Partial<ObjectIdParams>;
@@ -12,19 +12,19 @@ export function validateUserId(req: Request, res: Response, next: NextFunction) 
   return next();
 }
 
-export function validateCreateUser(req: Request, res: Response, next: NextFunction) {
+export function validateRegisterUser(req: Request, res: Response, next: NextFunction) {
   if (!req.body) return res.status(400).json({ message: 'body is required' });
 
-  const { email, name } = req.body as Partial<CreateUserBody>;
+  const { email, name, password } = req.body as Partial<RegisterUserBody>;
 
-  if (!email || !name) {
-    return res.status(400).json({ message: 'email and name are required' });
+  if (!email || !name || !password) {
+    return res.status(400).json({ message: 'email, name, and password are required' });
   }
-  if (typeof email !== 'string' || typeof name !== 'string') {
-    return res.status(400).json({ message: 'email and name must be strings' });
+  if (typeof email !== 'string' || typeof name !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ message: 'email, name, and password must be strings' });
   }
-  if (!email.trim() || !name.trim()) {
-    return res.status(400).json({ message: 'email and name cannot be empty' });
+  if (!email.trim() || !name.trim() || !password.trim()) {
+    return res.status(400).json({ message: 'email, name, and password cannot be empty' });
   }
 
   return next();

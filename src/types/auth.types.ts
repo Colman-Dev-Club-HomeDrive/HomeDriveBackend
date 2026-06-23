@@ -1,0 +1,21 @@
+export type JwtPayload = {
+  userId: string;
+  email: string;
+};
+
+export type LoginUserBody = {
+  email: string;
+  password: string;
+};
+
+export type AuthTokenResponse = {
+  success: true;
+  token: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+  };
+};
+
+export type AuthRegisterResponse = AuthTokenResponse;
