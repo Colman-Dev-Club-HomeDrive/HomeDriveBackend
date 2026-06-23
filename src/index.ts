@@ -5,17 +5,14 @@ import { authRouter } from './routes/auth.routes.js';
 import { usersRouter } from './routes/users.routes.js';
 import { postsRouter } from './routes/posts.routes.js';
 import { workspacesRouter } from './routes/workspace.routes.js';
+import { filesRouter } from './routes/files.routes.js';
 import cors from 'cors';
 import helmet from 'helmet';
-// create a new express application
+
 const app = express();
 
-// helmet is a middleware that helps to secure the express application by setting various HTTP headers
 app.use(helmet());
 
-// cors is a middleware that allows the express application to accept requests from the frontend specifically
-// the origin is the URL of the frontend
-// credentials: true means that the browser will send the credentials (cookies, authentication tokens, etc.) to the backend
 app.use(
   cors({
     origin: process.env.FRONTEND_URL,
@@ -40,6 +37,7 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use('/users', usersRouter);
 apiRouter.use('/posts', postsRouter);
 apiRouter.use('/workspaces', workspacesRouter);
+apiRouter.use('/files', filesRouter);
 
 app.use('/api', apiRouter);
 
