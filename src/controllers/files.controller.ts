@@ -5,7 +5,7 @@ import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
-import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, RenameFileBody } from '../types/file.types.js';
+import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 
 // TODO: remove once auth is wired up
@@ -18,6 +18,21 @@ const ALLOWED_PATHS: string[] = process.env.ALLOWED_PATHS
 
 function isPathAllowed(resolvedPath: string): boolean {
   return ALLOWED_PATHS.some((allowed) => resolvedPath.startsWith(allowed));
+}
+
+function getMediaFilter(mediaType?: MediaType) {
+  switch (mediaType) {
+    case 'documents':
+      return { isDirectory: false, mimeType: { $not: /^(image|video|audio)\// } };
+    case 'photos':
+      return { isDirectory: false, mimeType: /^image\// };
+    case 'videos':
+      return { isDirectory: false, mimeType: /^video\// };
+    case 'audio':
+      return { isDirectory: false, mimeType: /^audio\// };
+    default:
+      return {};
+  }
 }
 
 // GET /api/files/browse?path=...
@@ -143,10 +158,48 @@ export async function indexFile(req: Request, res: Response) {
 // GET /api/files
 export async function listFiles(req: Request, res: Response) {
   try {
-    const { workspaceId } = req.query as ListFilesQuery;
-    const filter = workspaceId ? { workspaceId } : {};
+    const { workspaceId, mediaType } = req.query as ListFilesQuery;
+    const filter = {
+      ...(workspaceId ? { workspaceId } : {}),
+      ...getMediaFilter(mediaType),
+    };
     const files = await FileModel.find(filter).sort({ createdAt: -1 });
     return res.json(files);
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// GET /api/files/media-types
+export async function getMediaTypeCounts(req: Request, res: Response) {
+  try {
+    const { workspaceId } = req.query as ListFilesQuery;
+    const baseMatch = {
+      ...(workspaceId ? { workspaceId } : {}),
+      isDirectory: false,
+    };
+
+    const counts = await FileModel.aggregate<MediaTypeCount>([
+      { $match: baseMatch },
+      {
+        $addFields: {
+          mediaType: {
+            $switch: {
+              branches: [
+                { case: { $regexMatch: { input: '$mimeType', regex: /^image\// } }, then: 'photos' },
+                { case: { $regexMatch: { input: '$mimeType', regex: /^video\// } }, then: 'videos' },
+                { case: { $regexMatch: { input: '$mimeType', regex: /^audio\// } }, then: 'audio' },
+              ],
+              default: 'documents',
+            },
+          },
+        },
+      },
+      { $group: { _id: '$mediaType', count: { $sum: 1 } } },
+      { $project: { _id: 0, mediaType: '$_id', count: 1 } },
+    ]);
+
+    return res.json(counts);
   } catch {
     return res.status(500).json({ message: 'server error' });
   }

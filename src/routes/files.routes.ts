@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   browseDirectory,
+  getMediaTypeCounts,
   indexFile,
   listFiles,
   getFileById,
@@ -14,6 +15,7 @@ export const filesRouter = Router();
 
 // /browse must come before /:id so Express doesn't treat "browse" as an id
 filesRouter.get('/browse', browseDirectory);
+filesRouter.get('/media-types', getMediaTypeCounts);
 filesRouter.get('/', listFiles);
 filesRouter.post('/', validateIndexFile, indexFile);
 filesRouter.get('/:id', validateFileId, getFileById);
