@@ -13,6 +13,14 @@ export type BrowseQuery = {
 
 export type ListFilesQuery = {
   workspaceId?: string;
+  mediaType?: MediaType;
+};
+
+export type MediaType = 'documents' | 'photos' | 'videos' | 'audio';
+
+export type MediaTypeCount = {
+  mediaType: MediaType;
+  count: number;
 };
 
 export type BrowseEntry = {
