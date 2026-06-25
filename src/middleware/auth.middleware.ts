@@ -1,12 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import type { JwtPayload } from '../types/auth.types.js';
-
-function parseBearerToken(rawAuthorization?: string): string | undefined {
-  if (!rawAuthorization) return undefined;
-  if (!rawAuthorization.toLowerCase().startsWith('bearer ')) return undefined;
-  return rawAuthorization.slice('bearer '.length).trim();
-}
+import { getRequestAuthToken } from '../utils/auth-token.js';
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const jwtSecret = process.env.JWT_SECRET;
@@ -14,9 +9,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(500).json({ message: 'server configuration error' });
   }
 
-  const token = parseBearerToken(req.headers.authorization);
+  const token = getRequestAuthToken(req);
   if (!token) {
-    return res.status(401).json({ message: 'missing or invalid authorization header' });
+    return res.status(401).json({ message: 'missing or invalid authentication token' });
   }
 
   try {

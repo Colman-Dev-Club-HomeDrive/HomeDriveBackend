@@ -23,3 +23,11 @@ export type AuthTokenResponse = {
 };
 
 export type AuthRegisterResponse = AuthTokenResponse;
+
+export type AuthMeResponse = {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+  };
+};

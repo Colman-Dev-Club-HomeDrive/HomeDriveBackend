@@ -6,6 +6,7 @@ import { usersRouter } from './routes/users.routes.js';
 import { postsRouter } from './routes/posts.routes.js';
 import { workspacesRouter } from './routes/workspace.routes.js';
 import { filesRouter } from './routes/files.routes.js';
+import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
 import { Server } from 'socket.io';
@@ -22,6 +23,8 @@ app.use(
     credentials: true,
   }),
 );
+
+app.use(cookieParser());
 
 // express.json() is a middleware that parses the request body and makes it available in req.body
 app.use(express.json());
