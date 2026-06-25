@@ -8,6 +8,8 @@ import { workspacesRouter } from './routes/workspace.routes.js';
 import { filesRouter } from './routes/files.routes.js';
 import cors from 'cors';
 import helmet from 'helmet';
+import { Server } from 'socket.io';
+import { registerFileRelay } from './sockets/file-relay.socket.js';
 
 const app = express();
 
@@ -55,7 +57,17 @@ const port = Number(process.env.PORT) || 3000;
 async function main() {
   await connectToMongoDB(resolveMongoUri());
 
-  await startServer(app, port);
+  const server = await startServer(app, port);
+  const io = new Server(server, {
+    cors: {
+      origin: process.env.FRONTEND_URL,
+      credentials: true,
+    },
+    transports: ['websocket'],
+  });
+
+  registerFileRelay(io);
+
   console.log(`✅ Server is running on port ${port}! 🚀`);
 }
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   browseDirectory,
+  downloadFile,
   getMediaTypeCounts,
   indexFile,
   listFiles,
@@ -18,6 +19,7 @@ filesRouter.get('/browse', browseDirectory);
 filesRouter.get('/media-types', getMediaTypeCounts);
 filesRouter.get('/', listFiles);
 filesRouter.post('/', validateIndexFile, indexFile);
+filesRouter.get('/:id/download', validateFileId, downloadFile);
 filesRouter.get('/:id', validateFileId, getFileById);
 filesRouter.patch('/:id', validateFileId, validateRenameFile, renameFile);
 filesRouter.delete('/:id', validateFileId, deleteFile);
