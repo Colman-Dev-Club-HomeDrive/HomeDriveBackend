@@ -5,11 +5,9 @@ import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
+import type { AuthLocals } from '../types/auth.types.js';
 import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
-
-// TODO: remove once auth is wired up
-const FIXED_USER_ID = '6854abcd1234567890abcdef';
 
 // Resolve allowed root paths from env, defaulting to the OS root
 const ALLOWED_PATHS: string[] = process.env.ALLOWED_PATHS
@@ -85,7 +83,12 @@ export async function browseDirectory(req: Request, res: Response) {
 // POST /api/files
 export async function indexFile(req: Request, res: Response) {
   try {
-    const { path: rawPath, workspaceId } = req.body as IndexFileBody;
+    const ownerId = (res as Response<unknown, AuthLocals>).locals.auth?.userId;
+    if (!ownerId) {
+      return res.status(401).json({ message: 'unauthorized' });
+    }
+
+    const { path: rawPath, workspaceId, shareWith } = req.body as IndexFileBody;
     const resolvedPath = nodePath.resolve(rawPath);
 
     if (!isPathAllowed(resolvedPath)) {
@@ -116,8 +119,9 @@ export async function indexFile(req: Request, res: Response) {
       mimeType,
       extension,
       isDirectory,
-      ownerId: FIXED_USER_ID,
+      ownerId,
       ...(workspaceId ? { workspaceId } : {}),
+      ...(shareWith ? { collaboration: shareWith } : {}),
     });
 
     // Keep workspace fileCount accurate

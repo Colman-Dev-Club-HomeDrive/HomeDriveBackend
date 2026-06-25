@@ -1,6 +1,7 @@
 export type IndexFileBody = {
   path: string;
   workspaceId?: string;
+  shareWith?: string;
 };
 
 export type RenameFileBody = {

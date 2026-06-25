@@ -10,6 +10,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { Server } from 'socket.io';
 import { registerFileRelay } from './sockets/file-relay.socket.js';
+import { requireAuth } from './middleware/auth.middleware.js';
 
 const app = express();
 
@@ -37,9 +38,9 @@ apiRouter.get('/health', (_req, res) => {
 
 apiRouter.use('/auth', authRouter);
 apiRouter.use('/users', usersRouter);
-apiRouter.use('/posts', postsRouter);
-apiRouter.use('/workspaces', workspacesRouter);
-apiRouter.use('/files', filesRouter);
+apiRouter.use('/posts', requireAuth, postsRouter);
+apiRouter.use('/workspaces', requireAuth, workspacesRouter);
+apiRouter.use('/files', requireAuth, filesRouter);
 
 app.use('/api', apiRouter);
 
