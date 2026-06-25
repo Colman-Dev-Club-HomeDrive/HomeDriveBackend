@@ -5,11 +5,9 @@ import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
+import type { AuthLocals } from '../types/auth.types.js';
 import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
-
-// TODO: remove once auth is wired up
-const FIXED_USER_ID = '6854abcd1234567890abcdef';
 
 // Resolve allowed root paths from env, defaulting to the OS root
 const ALLOWED_PATHS: string[] = process.env.ALLOWED_PATHS
@@ -85,7 +83,12 @@ export async function browseDirectory(req: Request, res: Response) {
 // POST /api/files
 export async function indexFile(req: Request, res: Response) {
   try {
-    const { path: rawPath, workspaceId } = req.body as IndexFileBody;
+    const ownerId = (res as Response<unknown, AuthLocals>).locals.auth?.userId;
+    if (!ownerId) {
+      return res.status(401).json({ message: 'unauthorized' });
+    }
+
+    const { path: rawPath, workspaceId, shareWith } = req.body as IndexFileBody;
     const resolvedPath = nodePath.resolve(rawPath);
 
     if (!isPathAllowed(resolvedPath)) {
@@ -116,8 +119,9 @@ export async function indexFile(req: Request, res: Response) {
       mimeType,
       extension,
       isDirectory,
-      ownerId: FIXED_USER_ID,
+      ownerId,
       ...(workspaceId ? { workspaceId } : {}),
+      ...(shareWith ? { collaboration: shareWith } : {}),
     });
 
     // Keep workspace fileCount accurate
@@ -239,20 +243,57 @@ export async function deleteFile(req: Request, res: Response) {
 export async function openFile(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
+    console.log('📂 Opening file with id:', id);
+    
+    const file = await FileModel.findById(id);
+    if (!file) {
+      console.log('❌ File not found:', id);
+      return res.status(404).json({ message: 'file not found' });
+    }
+
+    console.log('📂 File found:', { name: file.name, path: file.path, isDirectory: file.isDirectory });
+
+    // Verify the file still exists on disk before attempting to open
+    const stat = await fs.stat(file.path).catch(() => null);
+    if (!stat) {
+      console.log('❌ File does not exist on disk:', file.path);
+      return res.status(410).json({ message: 'file no longer exists on disk' });
+    }
+
+    console.log('✅ File exists on disk, opening...');
+    
+    // Dynamic import required because `open` is ESM-only
+    const { default: open } = await import('open');
+    await open(file.path);
+
+    console.log('✅ File opened successfully');
+    return res.json({ message: 'file opened' });
+  } catch (error) {
+    console.error('❌ Error opening file:', error);
+    if (error instanceof Error) {
+      return res.status(500).json({ message: 'server error', detail: error.message });
+    }
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// GET /api/files/:id/download
+export async function downloadFile(req: Request, res: Response) {
+  try {
+    const { id } = req.params as ObjectIdParams;
     const file = await FileModel.findById(id);
     if (!file) return res.status(404).json({ message: 'file not found' });
 
-    // Verify the file still exists on disk before attempting to open
+    if (file.isDirectory) {
+      return res.status(400).json({ message: 'directories cannot be downloaded' });
+    }
+
     const stat = await fs.stat(file.path).catch(() => null);
     if (!stat) {
       return res.status(410).json({ message: 'file no longer exists on disk' });
     }
 
-    // Dynamic import required because `open` is ESM-only
-    const { default: open } = await import('open');
-    await open(file.path);
-
-    return res.json({ message: 'file opened' });
+    return res.download(file.path, file.name);
   } catch {
     return res.status(500).json({ message: 'server error' });
   }

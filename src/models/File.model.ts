@@ -9,6 +9,7 @@ type FileProps = {
   isDirectory: boolean;
   workspaceId?: Types.ObjectId;
   ownerId: Types.ObjectId;
+  collaboration?: string;
 };
 
 export type FileDocument = HydratedDocument<FileProps>;
@@ -23,6 +24,7 @@ const FileSchema = new Schema<FileProps>(
     isDirectory: { type: Boolean, default: false },
     workspaceId: { type: Schema.Types.ObjectId, ref: 'Workspace', index: true },
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    collaboration: { type: String, trim: true },
   },
   { timestamps: true, toJSON: { virtuals: true } },
 );

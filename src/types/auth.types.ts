@@ -3,6 +3,10 @@ export type JwtPayload = {
   email: string;
 };
 
+export type AuthLocals = {
+  auth?: JwtPayload;
+};
+
 export type LoginUserBody = {
   email: string;
   password: string;

@@ -6,13 +6,16 @@ import type { ObjectIdParams } from '../types/common.types.js';
 export function validateIndexFile(req: Request, res: Response, next: NextFunction) {
   if (!req.body) return res.status(400).json({ message: 'body is required' });
 
-  const { path, workspaceId } = req.body as Partial<IndexFileBody>;
+  const { path, workspaceId, shareWith } = req.body as Partial<IndexFileBody>;
 
   if (!path || typeof path !== 'string' || path.trim() === '') {
     return res.status(400).json({ message: 'path is required' });
   }
   if (workspaceId !== undefined && workspaceId !== null && !mongoose.isValidObjectId(workspaceId)) {
     return res.status(400).json({ message: 'workspaceId is not a valid ObjectId' });
+  }
+  if (shareWith !== undefined && typeof shareWith !== 'string') {
+    return res.status(400).json({ message: 'shareWith must be a string when provided' });
   }
 
   return next();
