@@ -1,14 +1,21 @@
 import type { Request, Response } from 'express';
 import { compare } from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { type SignOptions } from 'jsonwebtoken';
 import { UserModel, type UserDocument } from '../models/User.model.js';
-import type { AuthRegisterResponse, AuthTokenResponse, LoginUserBody } from '../types/auth.types.js';
+import type { AuthRegisterResponse, AuthMeResponse, AuthTokenResponse, AuthLocals, LoginUserBody } from '../types/auth.types.js';
 import type { RegisterUserBody } from '../types/user.types.js';
+import { clearAuthCookie, getJwtExpiresIn, setAuthCookie } from '../utils/auth-cookie.js';
 
 const UNAUTHORIZED_MESSAGE = 'invalid email or password';
 
 function createAuthToken(user: Pick<UserDocument, '_id' | 'email'>, jwtSecret: string): string {
-  return jwt.sign({ userId: user._id.toString(), email: user.email }, jwtSecret);
+  const signOptions: SignOptions = { expiresIn: getJwtExpiresIn() as SignOptions['expiresIn'] };
+  return jwt.sign({ userId: user._id.toString(), email: user.email }, jwtSecret, signOptions);
+}
+
+function getAuthUserId(res: Response<unknown, AuthLocals>): string | null {
+  const userId = res.locals.auth?.userId;
+  return typeof userId === 'string' && userId.trim() ? userId : null;
 }
 
 function buildAuthResponse(
@@ -49,6 +56,7 @@ export async function register(req: Request, res: Response) {
     });
 
     const token = createAuthToken(user, jwtSecret);
+    setAuthCookie(res, token);
     const response: AuthRegisterResponse = buildAuthResponse(user, token);
 
     return res.status(201).json(response);
@@ -79,7 +87,40 @@ export async function login(req: Request, res: Response) {
     }
 
     const token = createAuthToken(user, jwtSecret);
+    setAuthCookie(res, token);
     const response = buildAuthResponse(user, token);
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+export function logout(_req: Request, res: Response) {
+  clearAuthCookie(res);
+  return res.status(200).json({ success: true });
+}
+
+export async function me(_req: Request, res: Response<unknown, AuthLocals>) {
+  try {
+    const userId = getAuthUserId(res);
+    if (!userId) {
+      return res.status(401).json({ message: 'missing or invalid authentication token' });
+    }
+
+    const user = await UserModel.findById(userId).select('name email');
+    if (!user) {
+      return res.status(404).json({ message: 'user not found' });
+    }
+
+    const response: AuthMeResponse = {
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+      },
+    };
 
     return res.status(200).json(response);
   } catch (err) {
