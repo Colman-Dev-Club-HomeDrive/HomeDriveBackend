@@ -6,7 +6,16 @@ import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
 import type { AuthLocals } from '../types/auth.types.js';
-import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
+import type {
+  BrowseEntry,
+  BrowseQuery,
+  IndexFileBody,
+  ListFilesQuery,
+  MediaType,
+  MediaTypeCount,
+  RenameFileBody,
+  StorageStatsResponse,
+} from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 
 // Resolve allowed root paths from env, defaulting to the OS root
@@ -14,8 +23,19 @@ const ALLOWED_PATHS: string[] = process.env.ALLOWED_PATHS
   ? process.env.ALLOWED_PATHS.split(',').map((p) => nodePath.resolve(p.trim()))
   : [nodePath.parse(process.cwd()).root];
 
+const DEFAULT_WORKSPACE_COLOR = '#3b82f6';
+
 function isPathAllowed(resolvedPath: string): boolean {
   return ALLOWED_PATHS.some((allowed) => resolvedPath.startsWith(allowed));
+}
+
+function resolveStorageStatsPath(): string {
+  const [firstAllowedPath] = ALLOWED_PATHS;
+  if (firstAllowedPath) {
+    return firstAllowedPath;
+  }
+
+  return nodePath.parse(process.cwd()).root;
 }
 
 function getMediaFilter(mediaType?: MediaType) {
@@ -31,6 +51,48 @@ function getMediaFilter(mediaType?: MediaType) {
     default:
       return {};
   }
+}
+
+async function indexPathTree(params: {
+  path: string;
+  ownerId: string;
+  workspaceId?: string;
+  shareWith?: string;
+}): Promise<number> {
+  const stat = await fs.stat(params.path);
+  const isDirectory = stat.isDirectory();
+  const name = nodePath.basename(params.path);
+  const extension = isDirectory ? '' : nodePath.extname(name).toLowerCase();
+  const mimeType = isDirectory ? 'inode/directory' : (mimeLookup(name) || 'application/octet-stream');
+
+  await FileModel.create({
+    name,
+    path: params.path,
+    size: isDirectory ? 0 : stat.size,
+    mimeType,
+    extension,
+    isDirectory,
+    ownerId: params.ownerId,
+    ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
+    ...(params.shareWith ? { collaboration: params.shareWith } : {}),
+  });
+
+  let createdCount = 1;
+
+  if (isDirectory) {
+    const entries = await fs.readdir(params.path, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = nodePath.join(params.path, entry.name);
+      createdCount += await indexPathTree({
+        path: entryPath,
+        ownerId: params.ownerId,
+        workspaceId: params.workspaceId,
+        shareWith: params.shareWith,
+      });
+    }
+  }
+
+  return createdCount;
 }
 
 // GET /api/files/browse?path=...
@@ -108,25 +170,34 @@ export async function indexFile(req: Request, res: Response) {
       return res.status(409).json({ message: 'already indexed', file: existing });
     }
 
-    const name = nodePath.basename(resolvedPath);
-    const extension = isDirectory ? '' : nodePath.extname(name).toLowerCase();
-    const mimeType = isDirectory ? 'inode/directory' : (mimeLookup(name) || 'application/octet-stream');
+    let resolvedWorkspaceId = workspaceId;
 
-    const file = await FileModel.create({
-      name,
+    if (isDirectory && !resolvedWorkspaceId) {
+      const workspace = await WorkspaceModel.create({
+        name: nodePath.basename(resolvedPath),
+        icon: 'folder',
+        color: DEFAULT_WORKSPACE_COLOR,
+        ownerId,
+        position: await WorkspaceModel.countDocuments(),
+        ...(shareWith ? { collaboration: shareWith } : {}),
+      });
+      resolvedWorkspaceId = String(workspace._id);
+    }
+
+    const createdCount = await indexPathTree({
       path: resolvedPath,
-      size: isDirectory ? 0 : stat.size,
-      mimeType,
-      extension,
-      isDirectory,
       ownerId,
-      ...(workspaceId ? { workspaceId } : {}),
-      ...(shareWith ? { collaboration: shareWith } : {}),
+      workspaceId: resolvedWorkspaceId,
+      shareWith,
     });
 
-    // Keep workspace fileCount accurate
-    if (workspaceId) {
-      await WorkspaceModel.findByIdAndUpdate(workspaceId, { $inc: { fileCount: 1 } });
+    if (resolvedWorkspaceId) {
+      await WorkspaceModel.findByIdAndUpdate(resolvedWorkspaceId, { $inc: { fileCount: createdCount } });
+    }
+
+    const file = await FileModel.findOne({ path: resolvedPath });
+    if (!file) {
+      return res.status(500).json({ message: 'server error' });
     }
 
     return res.status(201).json(file);
@@ -204,6 +275,36 @@ export async function getMediaTypeCounts(req: Request, res: Response) {
     ]);
 
     return res.json(counts);
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// GET /api/files/storage
+export async function getStorageStats(_req: Request, res: Response) {
+  try {
+    const statsPath = resolveStorageStatsPath();
+    const fsStats = await fs.statfs(statsPath);
+
+    const capacityBytes = fsStats.bsize * fsStats.blocks;
+    const availableBytes = fsStats.bsize * fsStats.bavail;
+    const serverUsedBytes = Math.max(capacityBytes - availableBytes, 0);
+
+    const [{ metadataUsedBytes = 0 } = { metadataUsedBytes: 0 }] = await FileModel.aggregate<
+      Pick<StorageStatsResponse, 'metadataUsedBytes'>
+    >([
+      { $match: { isDirectory: false } },
+      { $group: { _id: null, metadataUsedBytes: { $sum: '$size' } } },
+      { $project: { _id: 0, metadataUsedBytes: 1 } },
+    ]);
+
+    return res.json({
+      statsPath,
+      capacityBytes,
+      availableBytes,
+      serverUsedBytes,
+      metadataUsedBytes,
+    } satisfies StorageStatsResponse);
   } catch {
     return res.status(500).json({ message: 'server error' });
   }

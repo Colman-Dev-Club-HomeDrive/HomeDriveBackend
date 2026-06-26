@@ -32,3 +32,11 @@ export type BrowseEntry = {
   extension: string;
   mimeType: string;
 };
+
+export type StorageStatsResponse = {
+  statsPath: string;
+  capacityBytes: number;
+  availableBytes: number;
+  serverUsedBytes: number;
+  metadataUsedBytes: number;
+};
