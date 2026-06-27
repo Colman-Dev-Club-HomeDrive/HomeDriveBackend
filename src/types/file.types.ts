@@ -1,15 +1,16 @@
 export type IndexFileBody = {
-  path: string;
+  path?: string;
+  name?: string;
+  size?: number;
+  mimeType?: string;
+  extension?: string;
+  isDirectory?: boolean;
   workspaceId?: string;
   shareWith?: string;
 };
 
 export type RenameFileBody = {
   name: string;
-};
-
-export type BrowseQuery = {
-  path?: string;
 };
 
 export type ListFilesQuery = {
@@ -22,13 +23,4 @@ export type MediaType = 'documents' | 'photos' | 'videos' | 'audio';
 export type MediaTypeCount = {
   mediaType: MediaType;
   count: number;
-};
-
-export type BrowseEntry = {
-  name: string;
-  path: string;
-  isDirectory: boolean;
-  size: number;
-  extension: string;
-  mimeType: string;
 };

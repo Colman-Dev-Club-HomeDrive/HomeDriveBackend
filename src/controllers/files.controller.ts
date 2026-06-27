@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
 import type { AuthLocals } from '../types/auth.types.js';
-import type { BrowseEntry, BrowseQuery, IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
+import type { IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 
 // Resolve allowed root paths from env, defaulting to the OS root
@@ -33,49 +33,64 @@ function getMediaFilter(mediaType?: MediaType) {
   }
 }
 
-// GET /api/files/browse?path=...
-export async function browseDirectory(req: Request, res: Response) {
+// POST /api/files/upload
+export async function uploadFile(req: Request, res: Response) {
   try {
-    const { path: rawPath } = req.query as BrowseQuery;
-    const targetPath = nodePath.resolve(rawPath ?? nodePath.parse(process.cwd()).root);
-
-    if (!isPathAllowed(targetPath)) {
-      return res.status(403).json({ message: 'access to this path is not allowed' });
+    const ownerId = (res as Response<unknown, AuthLocals>).locals.auth?.userId;
+    if (!ownerId) {
+      return res.status(401).json({ message: 'unauthorized' });
     }
 
-    const stat = await fs.stat(targetPath).catch(() => null);
-    if (!stat || !stat.isDirectory()) {
-      return res.status(400).json({ message: 'path is not a valid directory' });
+    if (!req.file) {
+      return res.status(400).json({ message: 'no file provided' });
     }
 
-    const entries = await fs.readdir(targetPath, { withFileTypes: true });
+    const { workspaceId, shareWith } = req.body;
+    const uploadedFile = req.file;
 
-    const result: BrowseEntry[] = await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = nodePath.join(targetPath, entry.name);
-        const isDirectory = entry.isDirectory();
-        let size = 0;
+    const name = uploadedFile.originalname;
+    const path = uploadedFile.path;
+    const size = uploadedFile.size;
+    const extension = nodePath.extname(name).toLowerCase();
+    const mimeType = uploadedFile.mimetype || mimeLookup(name) || 'application/octet-stream';
 
-        if (!isDirectory) {
-          const fileStat = await fs.stat(fullPath).catch(() => null);
-          size = fileStat?.size ?? 0;
-        }
-
-        const extension = isDirectory ? '' : nodePath.extname(entry.name).toLowerCase();
-        const mimeType = isDirectory ? 'inode/directory' : (mimeLookup(entry.name) || 'application/octet-stream');
-
-        return { name: entry.name, path: fullPath, isDirectory, size, extension, mimeType };
-      }),
-    );
-
-    // Directories first, then files — both alphabetical
-    result.sort((a, b) => {
-      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-      return a.name.localeCompare(b.name);
+    const file = await FileModel.create({
+      name,
+      path,
+      size,
+      mimeType,
+      extension,
+      isDirectory: false,
+      ownerId,
+      ...(workspaceId && mongoose.isValidObjectId(workspaceId) ? { workspaceId } : {}),
+      ...(shareWith ? { collaboration: shareWith } : {}),
     });
 
-    return res.json({ path: targetPath, entries: result });
-  } catch {
+    if (workspaceId && mongoose.isValidObjectId(workspaceId)) {
+      await WorkspaceModel.findByIdAndUpdate(workspaceId, { $inc: { fileCount: 1 } });
+    }
+
+    return res.status(201).json(file);
+  } catch (error) {
+    console.error('uploadFile failed:', error);
+
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: number }).code === 11000
+    ) {
+      return res.status(409).json({ message: 'file already indexed' });
+    }
+
+    if (error instanceof mongoose.Error.ValidationError) {
+      return res.status(400).json({ message: 'invalid file data', detail: error.message });
+    }
+
+    if (error instanceof Error && process.env.NODE_ENV !== 'production') {
+      return res.status(500).json({ message: 'server error', detail: error.message });
+    }
+
     return res.status(500).json({ message: 'server error' });
   }
 }
@@ -88,34 +103,78 @@ export async function indexFile(req: Request, res: Response) {
       return res.status(401).json({ message: 'unauthorized' });
     }
 
-    const { path: rawPath, workspaceId, shareWith } = req.body as IndexFileBody;
-    const resolvedPath = nodePath.resolve(rawPath);
+    const {
+      path: rawPath,
+      name: rawName,
+      size: rawSize,
+      mimeType: rawMimeType,
+      extension: rawExtension,
+      isDirectory: rawIsDirectory,
+      workspaceId,
+      shareWith,
+    } = req.body as IndexFileBody;
 
-    if (!isPathAllowed(resolvedPath)) {
-      return res.status(403).json({ message: 'access to this path is not allowed' });
+    const normalizedPath = typeof rawPath === 'string' ? rawPath.trim() : '';
+    const hasAbsolutePath = normalizedPath !== '' && nodePath.isAbsolute(normalizedPath);
+
+    let name: string;
+    let path = '';
+    let size = 0;
+    let mimeType = 'application/octet-stream';
+    let extension = '';
+    let isDirectory = false;
+
+    if (hasAbsolutePath) {
+      const resolvedPath = nodePath.resolve(normalizedPath);
+
+      if (!isPathAllowed(resolvedPath)) {
+        return res.status(403).json({ message: 'access to this path is not allowed' });
+      }
+
+      const stat = await fs.stat(resolvedPath).catch(() => null);
+      if (!stat) {
+        return res.status(400).json({ message: 'path does not exist on disk' });
+      }
+
+      isDirectory = stat.isDirectory();
+      name = nodePath.basename(resolvedPath);
+      path = resolvedPath;
+      size = isDirectory ? 0 : stat.size;
+      extension = isDirectory ? '' : nodePath.extname(name).toLowerCase();
+      mimeType = isDirectory ? 'inode/directory' : (mimeLookup(name) || 'application/octet-stream');
+    } else {
+      if (!rawName || typeof rawName !== 'string' || rawName.trim() === '') {
+        return res.status(400).json({ message: 'name is required for metadata-only indexing' });
+      }
+
+      name = rawName.trim();
+      isDirectory = rawIsDirectory === true;
+      size = isDirectory ? 0 : (typeof rawSize === 'number' ? rawSize : 0);
+      path = normalizedPath;
+      extension = isDirectory
+        ? ''
+        : typeof rawExtension === 'string' && rawExtension.trim() !== ''
+          ? (rawExtension.startsWith('.') ? rawExtension.toLowerCase() : `.${rawExtension.toLowerCase()}`)
+          : nodePath.extname(name).toLowerCase();
+      mimeType = isDirectory
+        ? 'inode/directory'
+        : typeof rawMimeType === 'string' && rawMimeType.trim() !== ''
+          ? rawMimeType.trim()
+          : (mimeLookup(name) || 'application/octet-stream');
     }
 
-    const stat = await fs.stat(resolvedPath).catch(() => null);
-    if (!stat) {
-      return res.status(400).json({ message: 'path does not exist on disk' });
+    if (path !== '') {
+      // Prevent duplicate indexing of the same path
+      const existing = await FileModel.findOne({ path });
+      if (existing) {
+        return res.status(409).json({ message: 'already indexed', file: existing });
+      }
     }
-
-    const isDirectory = stat.isDirectory();
-
-    // Prevent duplicate indexing of the same path
-    const existing = await FileModel.findOne({ path: resolvedPath });
-    if (existing) {
-      return res.status(409).json({ message: 'already indexed', file: existing });
-    }
-
-    const name = nodePath.basename(resolvedPath);
-    const extension = isDirectory ? '' : nodePath.extname(name).toLowerCase();
-    const mimeType = isDirectory ? 'inode/directory' : (mimeLookup(name) || 'application/octet-stream');
 
     const file = await FileModel.create({
       name,
-      path: resolvedPath,
-      size: isDirectory ? 0 : stat.size,
+      path,
+      size,
       mimeType,
       extension,
       isDirectory,
@@ -243,33 +302,28 @@ export async function deleteFile(req: Request, res: Response) {
 export async function openFile(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
-    console.log('📂 Opening file with id:', id);
-    
     const file = await FileModel.findById(id);
-    if (!file) {
-      console.log('❌ File not found:', id);
-      return res.status(404).json({ message: 'file not found' });
+    if (!file) return res.status(404).json({ message: 'file not found' });
+
+    if (!file.path) {
+      return res.status(400).json({ message: 'metadata-only files cannot be opened from server disk' });
     }
 
-    console.log('📂 File found:', { name: file.name, path: file.path, isDirectory: file.isDirectory });
+    if (file.isDirectory) {
+      return res.status(400).json({ message: 'directories cannot be opened in browser' });
+    }
 
-    // Verify the file still exists on disk before attempting to open
     const stat = await fs.stat(file.path).catch(() => null);
     if (!stat) {
-      console.log('❌ File does not exist on disk:', file.path);
       return res.status(410).json({ message: 'file no longer exists on disk' });
     }
 
-    console.log('✅ File exists on disk, opening...');
-    
-    // Dynamic import required because `open` is ESM-only
-    const { default: open } = await import('open');
-    await open(file.path);
-
-    console.log('✅ File opened successfully');
-    return res.json({ message: 'file opened' });
+    // The browser client should open this URL locally; server must not open OS apps.
+    return res.json({
+      message: 'file ready to open in browser',
+      url: `/api/files/${id}/download`,
+    });
   } catch (error) {
-    console.error('❌ Error opening file:', error);
     if (error instanceof Error) {
       return res.status(500).json({ message: 'server error', detail: error.message });
     }
@@ -283,6 +337,10 @@ export async function downloadFile(req: Request, res: Response) {
     const { id } = req.params as ObjectIdParams;
     const file = await FileModel.findById(id);
     if (!file) return res.status(404).json({ message: 'file not found' });
+
+    if (!file.path) {
+      return res.status(400).json({ message: 'metadata-only files cannot be downloaded from server disk' });
+    }
 
     if (file.isDirectory) {
       return res.status(400).json({ message: 'directories cannot be downloaded' });
@@ -308,6 +366,14 @@ export async function renameFile(req: Request, res: Response) {
 
     const file = await FileModel.findById(id);
     if (!file) return res.status(404).json({ message: 'file not found' });
+
+    if (!file.path) {
+      file.name = nextName;
+      file.extension = file.isDirectory ? '' : nodePath.extname(nextName).toLowerCase();
+      file.mimeType = file.isDirectory ? 'inode/directory' : (mimeLookup(nextName) || 'application/octet-stream');
+      await file.save();
+      return res.json(file);
+    }
 
     const currentPath = file.path;
     const parentDir = nodePath.dirname(currentPath);
@@ -352,7 +418,8 @@ export async function renameFile(req: Request, res: Response) {
       if (descendants.length > 0) {
         await Promise.all(
           descendants.map(async (descendant) => {
-            descendant.path = `${nextPath}${descendant.path.slice(currentPath.length)}`;
+            const descendantPath = descendant.path ?? '';
+            descendant.path = `${nextPath}${descendantPath.slice(currentPath.length)}`;
             await descendant.save();
           }),
         );
