@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  browseDirectory,
   downloadFile,
   getMediaTypeCounts,
   getStorageStats,
@@ -10,16 +9,16 @@ import {
   deleteFile,
   openFile,
   renameFile,
+  uploadFile,
 } from '../controllers/files.controller.js';
 import { validateFileId, validateIndexFile, validateRenameFile } from '../validators/files.validator.js';
+import { upload } from '../middleware/upload.middleware.js';
 
 export const filesRouter = Router();
-
-// /browse must come before /:id so Express doesn't treat "browse" as an id
-filesRouter.get('/browse', browseDirectory);
 filesRouter.get('/media-types', getMediaTypeCounts);
 filesRouter.get('/storage', getStorageStats);
 filesRouter.get('/', listFiles);
+filesRouter.post('/upload', upload.single('file'), uploadFile);
 filesRouter.post('/', validateIndexFile, indexFile);
 filesRouter.get('/:id/download', validateFileId, downloadFile);
 filesRouter.get('/:id', validateFileId, getFileById);

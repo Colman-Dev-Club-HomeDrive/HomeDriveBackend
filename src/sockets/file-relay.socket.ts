@@ -66,9 +66,15 @@ type RelaySocket = Socket<ClientToServerEvents, ServerToClientEvents, Record<str
 const REQUEST_TTL_MS = 5 * 60 * 1000;
 const TRANSFER_TTL_MS = 30 * 60 * 1000;
 const MAX_CHUNK_BYTES = 512 * 1024;
+const DEBUG_TRANSFER = process.env.DEBUG_TRANSFER === '1' || process.env.NODE_ENV !== 'production';
 
 const pendingRequests = new Map<string, PendingRequest>();
 const transferSessions = new Map<string, TransferSession>();
+
+function relayDebugLog(...args: unknown[]): void {
+  if (!DEBUG_TRANSFER) return;
+  console.log('[file-relay]', ...args);
+}
 
 function userRoom(userId: string): string {
   return `user:${userId}`;
@@ -206,6 +212,11 @@ export function registerFileRelay(io: Server): void {
     const jwtSecret = process.env.JWT_SECRET;
 
     if (!token || !jwtSecret) {
+      relayDebugLog('auth failed: missing token or secret', {
+        hasToken: Boolean(token),
+        hasSecret: Boolean(jwtSecret),
+        handshakeAuthKeys: Object.keys(socket.handshake.auth ?? {}),
+      });
       next(new Error('Unauthorized'));
       return;
     }
@@ -214,16 +225,38 @@ export function registerFileRelay(io: Server): void {
       const decoded = jwt.verify(token, jwtSecret) as JwtPayload;
       socket.data.userId = decoded.userId;
       socket.data.email = decoded.email;
+      relayDebugLog('auth success', { userId: decoded.userId, socketId: socket.id });
       next();
     } catch (_error) {
+      relayDebugLog('auth failed: token verification error', { socketId: socket.id });
       next(new Error('Unauthorized'));
     }
   });
 
   io.on('connection', (socket: RelaySocket) => {
     socket.join(userRoom(socket.data.userId));
+    relayDebugLog('socket connected and room joined', {
+      userId: socket.data.userId,
+      email: socket.data.email,
+      socketId: socket.id,
+      room: userRoom(socket.data.userId),
+    });
+
+    socket.on('disconnect', (reason) => {
+      relayDebugLog('socket disconnected', {
+        userId: socket.data.userId,
+        socketId: socket.id,
+        reason,
+      });
+    });
 
     socket.on('file:request', async (payload: TransferRequestDto) => {
+      relayDebugLog('received file:request', {
+        fromUserId: socket.data.userId,
+        socketId: socket.id,
+        payload,
+      });
+
       if (!payload.requestId || !payload.fileId || !payload.fileName) {
         emitSocketError(socket, {
           requestId: payload.requestId,
@@ -252,7 +285,19 @@ export function registerFileRelay(io: Server): void {
         return;
       }
 
+      relayDebugLog('resolved owner for request', {
+        requestId: payload.requestId,
+        requesterUserId: socket.data.userId,
+        ownerUserId,
+        ownerOnline: isUserOnline(io, ownerUserId),
+      });
+
       if (!isUserOnline(io, ownerUserId)) {
+        relayDebugLog('owner offline, returning denied permission-result', {
+          requestId: payload.requestId,
+          requesterUserId: socket.data.userId,
+          ownerUserId,
+        });
         io.to(userRoom(socket.data.userId)).emit('file:permission-result', {
           requestId: payload.requestId,
           approved: false,
@@ -277,6 +322,13 @@ export function registerFileRelay(io: Server): void {
         requesterEmail: socket.data.email,
         requestedAt: new Date().toISOString(),
       } satisfies TransferRequestDto);
+
+      relayDebugLog('emitted file:permission-prompt', {
+        requestId: payload.requestId,
+        room: userRoom(ownerUserId),
+        ownerUserId,
+        requesterUserId: socket.data.userId,
+      });
     });
 
     socket.on('file:permission-response', (payload: TransferPermissionResponseDto) => {

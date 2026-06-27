@@ -2,7 +2,7 @@ import { Schema, model, Types, type HydratedDocument } from 'mongoose';
 
 type FileProps = {
   name: string;
-  path: string;
+  path?: string;
   size: number;
   mimeType: string;
   extension: string;
@@ -17,7 +17,7 @@ export type FileDocument = HydratedDocument<FileProps>;
 const FileSchema = new Schema<FileProps>(
   {
     name: { type: String, required: true, trim: true },
-    path: { type: String, required: true, trim: true },
+    path: { type: String, default: '', trim: true },
     size: { type: Number, required: true },
     mimeType: { type: String, required: true },
     extension: { type: String, default: '' },

@@ -15,11 +15,30 @@ import { requireAuth } from './middleware/auth.middleware.js';
 
 const app = express();
 
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL ?? '').split(','),
+  ...(process.env.FRONTEND_URLS ?? '').split(','),
+]
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const isAllowedOrigin = (origin?: string): boolean => {
+  // Allow non-browser or same-origin requests where Origin may be absent.
+  if (!origin) return true;
+  return allowedOrigins.includes(origin);
+};
+
 app.use(helmet());
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error(`CORS blocked for origin: ${origin ?? 'unknown'}`));
+    },
     credentials: true,
   }),
 );
@@ -64,7 +83,13 @@ async function main() {
   const server = await startServer(app, port);
   const io = new Server(server, {
     cors: {
-      origin: process.env.FRONTEND_URL,
+      origin: (origin, callback) => {
+        if (isAllowedOrigin(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error(`Socket CORS blocked for origin: ${origin ?? 'unknown'}`));
+      },
       credentials: true,
     },
     transports: ['websocket'],
