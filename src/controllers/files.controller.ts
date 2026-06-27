@@ -6,7 +6,14 @@ import mongoose from 'mongoose';
 import { FileModel } from '../models/File.model.js';
 import { WorkspaceModel } from '../models/Workspace.model.js';
 import type { AuthLocals } from '../types/auth.types.js';
-import type { IndexFileBody, ListFilesQuery, MediaType, MediaTypeCount, RenameFileBody } from '../types/file.types.js';
+import type {
+  IndexFileBody,
+  ListFilesQuery,
+  MediaType,
+  MediaTypeCount,
+  RenameFileBody,
+  StorageStatsResponse,
+} from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 
 // Resolve allowed root paths from env, defaulting to the OS root
@@ -16,6 +23,15 @@ const ALLOWED_PATHS: string[] = process.env.ALLOWED_PATHS
 
 function isPathAllowed(resolvedPath: string): boolean {
   return ALLOWED_PATHS.some((allowed) => resolvedPath.startsWith(allowed));
+}
+
+function resolveStorageStatsPath(): string {
+  const [firstAllowedPath] = ALLOWED_PATHS;
+  if (firstAllowedPath) {
+    return firstAllowedPath;
+  }
+
+  return nodePath.parse(process.cwd()).root;
 }
 
 function getMediaFilter(mediaType?: MediaType) {
@@ -123,6 +139,7 @@ export async function indexFile(req: Request, res: Response) {
     let mimeType = 'application/octet-stream';
     let extension = '';
     let isDirectory = false;
+    let workspaceObjectId = workspaceId;
 
     if (hasAbsolutePath) {
       const resolvedPath = nodePath.resolve(normalizedPath);
@@ -171,6 +188,18 @@ export async function indexFile(req: Request, res: Response) {
       }
     }
 
+    if (hasAbsolutePath && isDirectory && !workspaceObjectId) {
+      const workspace = await WorkspaceModel.create({
+        name: nodePath.basename(path),
+        icon: 'folder',
+        color: '#3b82f6',
+        ownerId,
+        position: await WorkspaceModel.countDocuments(),
+        ...(shareWith ? { collaboration: shareWith } : {}),
+      });
+      workspaceObjectId = String(workspace._id);
+    }
+
     const file = await FileModel.create({
       name,
       path,
@@ -179,13 +208,12 @@ export async function indexFile(req: Request, res: Response) {
       extension,
       isDirectory,
       ownerId,
-      ...(workspaceId ? { workspaceId } : {}),
+      ...(workspaceObjectId ? { workspaceId: workspaceObjectId } : {}),
       ...(shareWith ? { collaboration: shareWith } : {}),
     });
 
-    // Keep workspace fileCount accurate
-    if (workspaceId) {
-      await WorkspaceModel.findByIdAndUpdate(workspaceId, { $inc: { fileCount: 1 } });
+    if (workspaceObjectId) {
+      await WorkspaceModel.findByIdAndUpdate(workspaceObjectId, { $inc: { fileCount: 1 } });
     }
 
     return res.status(201).json(file);
@@ -263,6 +291,36 @@ export async function getMediaTypeCounts(req: Request, res: Response) {
     ]);
 
     return res.json(counts);
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// GET /api/files/storage
+export async function getStorageStats(_req: Request, res: Response) {
+  try {
+    const statsPath = resolveStorageStatsPath();
+    const fsStats = await fs.statfs(statsPath);
+
+    const capacityBytes = fsStats.bsize * fsStats.blocks;
+    const availableBytes = fsStats.bsize * fsStats.bavail;
+    const serverUsedBytes = Math.max(capacityBytes - availableBytes, 0);
+
+    const [{ metadataUsedBytes = 0 } = { metadataUsedBytes: 0 }] = await FileModel.aggregate<
+      Pick<StorageStatsResponse, 'metadataUsedBytes'>
+    >([
+      { $match: { isDirectory: false } },
+      { $group: { _id: null, metadataUsedBytes: { $sum: '$size' } } },
+      { $project: { _id: 0, metadataUsedBytes: 1 } },
+    ]);
+
+    return res.json({
+      statsPath,
+      capacityBytes,
+      availableBytes,
+      serverUsedBytes,
+      metadataUsedBytes,
+    } satisfies StorageStatsResponse);
   } catch {
     return res.status(500).json({ message: 'server error' });
   }

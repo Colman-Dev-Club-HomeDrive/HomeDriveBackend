@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   downloadFile,
   getMediaTypeCounts,
+  getStorageStats,
   indexFile,
   listFiles,
   getFileById,
@@ -15,6 +16,7 @@ import { upload } from '../middleware/upload.middleware.js';
 
 export const filesRouter = Router();
 filesRouter.get('/media-types', getMediaTypeCounts);
+filesRouter.get('/storage', getStorageStats);
 filesRouter.get('/', listFiles);
 filesRouter.post('/upload', upload.single('file'), uploadFile);
 filesRouter.post('/', validateIndexFile, indexFile);

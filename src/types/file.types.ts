@@ -24,3 +24,11 @@ export type MediaTypeCount = {
   mediaType: MediaType;
   count: number;
 };
+
+export type StorageStatsResponse = {
+  statsPath: string;
+  capacityBytes: number;
+  availableBytes: number;
+  serverUsedBytes: number;
+  metadataUsedBytes: number;
+};
