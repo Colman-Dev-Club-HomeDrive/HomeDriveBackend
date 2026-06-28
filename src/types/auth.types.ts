@@ -31,3 +31,14 @@ export type AuthMeResponse = {
     email: string;
   };
 };
+
+export type ChangePasswordBody = {
+  currentPassword: string;
+  newPassword: string;
+  confirmNewPassword: string;
+};
+
+export type ChangePasswordResponse = {
+  success: true;
+  message: string;
+};
