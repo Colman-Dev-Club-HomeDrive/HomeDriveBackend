@@ -12,6 +12,7 @@ import type {
   MediaType,
   MediaTypeCount,
   RenameFileBody,
+  ShareFileBody,
   StorageStatsResponse,
 } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
@@ -47,6 +48,18 @@ function getMediaFilter(mediaType?: MediaType) {
     default:
       return {};
   }
+}
+
+function normalizeCollaborators(rawValue: string): string[] {
+  const unique = new Set<string>();
+  for (const part of rawValue.split(',')) {
+    const normalized = part.trim().toLowerCase();
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+
+  return Array.from(unique);
 }
 
 // POST /api/files/upload
@@ -483,6 +496,25 @@ export async function renameFile(req: Request, res: Response) {
         );
       }
     }
+
+    return res.json(file);
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// PATCH /api/files/:id/share
+export async function shareFile(req: Request, res: Response) {
+  try {
+    const { id } = req.params as ObjectIdParams;
+    const { shareWith } = req.body as ShareFileBody;
+
+    const file = await FileModel.findById(id);
+    if (!file) return res.status(404).json({ message: 'file not found' });
+
+    const collaborators = normalizeCollaborators(shareWith);
+    file.collaboration = collaborators.join(', ');
+    await file.save();
 
     return res.json(file);
   } catch {
