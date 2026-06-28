@@ -6,6 +6,7 @@ import { usersRouter } from './routes/users.routes.js';
 import { postsRouter } from './routes/posts.routes.js';
 import { workspacesRouter } from './routes/workspace.routes.js';
 import { filesRouter } from './routes/files.routes.js';
+import { accessRouter } from './routes/access.routes.js';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -63,6 +64,7 @@ apiRouter.use('/users', usersRouter);
 apiRouter.use('/posts', requireAuth, postsRouter);
 apiRouter.use('/workspaces', requireAuth, workspacesRouter);
 apiRouter.use('/files', requireAuth, filesRouter);
+apiRouter.use('/access', requireAuth, accessRouter);
 
 app.use('/api', apiRouter);
 
