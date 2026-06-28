@@ -1,10 +1,18 @@
 import type { Request, Response } from 'express';
-import { compare } from 'bcryptjs';
-import jwt, { type SignOptions } from 'jsonwebtoken';
 import { UserModel, type UserDocument } from '../models/User.model.js';
-import type { AuthRegisterResponse, AuthMeResponse, AuthTokenResponse, AuthLocals, LoginUserBody } from '../types/auth.types.js';
+import type {
+  AuthRegisterResponse,
+  AuthMeResponse,
+  AuthTokenResponse,
+  AuthLocals,
+  ChangePasswordBody,
+  ChangePasswordResponse,
+  LoginUserBody,
+} from '../types/auth.types.js';
 import type { RegisterUserBody } from '../types/user.types.js';
 import { clearAuthCookie, getJwtExpiresIn, setAuthCookie } from '../utils/auth-cookie.js';
+import { jwt, type SignOptions } from '../utils/jwt.js';
+import { hashPassword, verifyPassword } from '../utils/password.js';
 
 const UNAUTHORIZED_MESSAGE = 'invalid email or password';
 
@@ -81,7 +89,7 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ message: UNAUTHORIZED_MESSAGE });
     }
 
-    const isPasswordValid = await compare(password, user.password);
+    const isPasswordValid = await verifyPassword(password, user.password);
     if (!isPasswordValid) {
       return res.status(401).json({ message: UNAUTHORIZED_MESSAGE });
     }
@@ -120,6 +128,50 @@ export async function me(_req: Request, res: Response<unknown, AuthLocals>) {
         name: user.name,
         email: user.email,
       },
+    };
+
+    return res.status(200).json(response);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+export async function changePassword(req: Request, res: Response<unknown, AuthLocals>) {
+  try {
+    const userId = getAuthUserId(res);
+    if (!userId) {
+      return res.status(401).json({ message: 'missing or invalid authentication token' });
+    }
+
+    const { currentPassword, newPassword } = req.body as ChangePasswordBody;
+    const normalizedCurrentPassword = currentPassword.trim();
+    const normalizedNewPassword = newPassword.trim();
+
+    const user = await UserModel.findById(userId).select('+password');
+    if (!user) {
+      return res.status(404).json({ message: 'user not found' });
+    }
+
+    const isCurrentPasswordValid = await verifyPassword(normalizedCurrentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      return res.status(401).json({ message: 'current password is incorrect' });
+    }
+
+    const hashedPassword = await hashPassword(normalizedNewPassword);
+    const updateResult = await UserModel.updateOne({ _id: user._id }, { $set: { password: hashedPassword } });
+    if (updateResult.matchedCount === 0) {
+      return res.status(404).json({ message: 'user not found' });
+    }
+
+    const updatedUser = await UserModel.findById(user._id).select('+password');
+    if (!updatedUser || !(await verifyPassword(normalizedNewPassword, updatedUser.password))) {
+      return res.status(500).json({ message: 'failed to update password' });
+    }
+
+    const response: ChangePasswordResponse = {
+      success: true,
+      message: 'password updated successfully',
     };
 
     return res.status(200).json(response);

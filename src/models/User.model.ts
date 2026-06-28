@@ -1,7 +1,5 @@
-import { hash } from 'bcryptjs';
 import { Schema, model, Types, type HydratedDocument } from 'mongoose';
-
-const SALT_ROUNDS = 10;
+import { hashPassword } from '../utils/password.js';
 
 type UserProps = {
   email: string;
@@ -38,7 +36,7 @@ const UserSchema = new Schema<UserProps>(
 
 UserSchema.pre('save', async function () {
   if (!this.isModified('password')) return;
-  this.password = await hash(this.password, SALT_ROUNDS);
+  this.password = await hashPassword(this.password);
 });
 
 export const UserModel = model<UserProps>('User', UserSchema);

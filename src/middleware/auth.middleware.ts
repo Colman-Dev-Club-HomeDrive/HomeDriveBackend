@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
+import { jwt } from '../utils/jwt.js';
 import type { JwtPayload } from '../types/auth.types.js';
 import { getRequestAuthToken } from '../utils/auth-token.js';
 
