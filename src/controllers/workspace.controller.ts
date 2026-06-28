@@ -12,6 +12,7 @@ import type {
 } from '../types/workspace.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 import type { AuthLocals } from '../types/auth.types.js';
+import { canAccessSharedData, canManageSharedAccess, canUploadFiles } from '../utils/temporary-access.js';
 
 // TODO: remove once auth is wired up
 const FIXED_USER_ID = '6854abcd1234567890abcdef';
@@ -21,20 +22,69 @@ function normalizeCollaborators(rawValue?: string): string[] {
 
   const unique = new Set<string>();
   for (const part of rawValue.split(',')) {
-    const normalized = part.trim().toLowerCase();
-    if (normalized) {
-      unique.add(normalized);
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+
+    const separatorIndex = trimmed.lastIndexOf(':');
+    const emailPart = separatorIndex > 0 ? trimmed.slice(0, separatorIndex) : trimmed;
+    const permissionPart = separatorIndex > 0 ? trimmed.slice(separatorIndex + 1).trim().toLowerCase() : '';
+    const normalizedEmail = emailPart.trim().toLowerCase();
+    if (!normalizedEmail) continue;
+
+    if (permissionPart === 'readonly' || permissionPart === 'editor') {
+      unique.add(`${normalizedEmail}:${permissionPart}`);
+    } else {
+      unique.add(normalizedEmail);
     }
   }
 
   return Array.from(unique);
 }
 
+function collaboratorEmailsFromRaw(rawValue?: string): string[] {
+  return normalizeCollaborators(rawValue)
+    .map((entry) => entry.split(':')[0]?.trim().toLowerCase())
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildCollaborationEmailRegex(email: string): RegExp {
+  const escapedEmail = escapeRegex(email.trim().toLowerCase());
+  return new RegExp(`(^|,\\s*)${escapedEmail}(?::(?:readonly|editor))?(\\s*,|$)`, 'i');
+}
+
+async function getMissingCollaboratorEmails(rawValue?: string): Promise<string[]> {
+  const collaboratorEmails = collaboratorEmailsFromRaw(rawValue);
+  if (collaboratorEmails.length === 0) return [];
+
+  const uniqueEmails = Array.from(new Set(collaboratorEmails));
+
+  const existingUsers = await UserModel.find({ email: { $in: uniqueEmails } }).select('email -_id').lean();
+  const existingEmailSet = new Set(existingUsers.map((user) => user.email.toLowerCase()));
+
+  return uniqueEmails.filter((email) => !existingEmailSet.has(email));
+}
+
 // CREATE workspace
 export async function createWorkspace(req: Request, res: Response) {
   try {
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    if (!(await canUploadFiles(auth?.email))) {
+      return res.status(403).json({ message: 'upload access denied' });
+    }
+
     const { name, icon, color, shareWith } = req.body as CreateWorkspaceBody;
     const ownerId = (req.body as CreateWorkspaceBody).ownerId ?? FIXED_USER_ID;
+
+    const missingCollaborators = await getMissingCollaboratorEmails(shareWith);
+    if (missingCollaborators.length > 0) {
+      return res.status(404).json({ message: `users not found: ${missingCollaborators.join(', ')}` });
+    }
+
+    const normalizedShareWith = typeof shareWith === 'string' ? normalizeCollaborators(shareWith).join(', ') : undefined;
 
     let resolvedOwnerId: string;
     if (ownerId === FIXED_USER_ID) {
@@ -52,7 +102,7 @@ export async function createWorkspace(req: Request, res: Response) {
       color,
       ownerId: resolvedOwnerId,
       position: count,
-      ...(shareWith ? { collaboration: shareWith } : {}),
+      ...(normalizedShareWith ? { collaboration: normalizedShareWith } : {}),
     });
 
     return res.status(201).json(workspace);
@@ -64,7 +114,30 @@ export async function createWorkspace(req: Request, res: Response) {
 // READ all workspaces — pinned first (oldest pin at top), then unpinned by position
 export async function listWorkspaces(_req: Request, res: Response) {
   try {
-    const workspaces = await WorkspaceModel.find().sort({ pinned: -1, pinnedAt: 1, position: 1 });
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    if (!(await canAccessSharedData(auth?.email))) {
+      return res.json([]);
+    }
+
+    const requesterEmail = auth?.email?.trim().toLowerCase();
+    const requesterUserId = auth?.userId;
+    if (!requesterEmail || !requesterUserId) {
+      return res.json([]);
+    }
+
+    if (await canManageSharedAccess(requesterEmail)) {
+      const workspaces = await WorkspaceModel.find().sort({ pinned: -1, pinnedAt: 1, position: 1 });
+      return res.json(workspaces);
+    }
+
+    const collaborationRegex = buildCollaborationEmailRegex(requesterEmail);
+
+    const workspaces = await WorkspaceModel.find({
+      $or: [
+        { ownerId: requesterUserId },
+        { collaboration: { $regex: collaborationRegex } },
+      ],
+    }).sort({ pinned: -1, pinnedAt: 1, position: 1 });
     return res.json(workspaces);
   } catch {
     return res.status(500).json({ message: 'server error' });
@@ -74,9 +147,27 @@ export async function listWorkspaces(_req: Request, res: Response) {
 // READ one
 export async function getWorkspaceById(req: Request, res: Response) {
   try {
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    const requesterEmail = auth?.email?.trim().toLowerCase();
+    const requesterUserId = auth?.userId;
+    if (!requesterEmail || !requesterUserId) {
+      return res.status(401).json({ message: 'unauthorized' });
+    }
+
+    if (!(await canAccessSharedData(requesterEmail))) {
+      return res.status(403).json({ message: 'forbidden' });
+    }
+
     const { id } = req.params as ObjectIdParams;
     const workspace = await WorkspaceModel.findById(id);
     if (!workspace) return res.status(404).json({ message: 'workspace not found' });
+
+    const isManager = await canManageSharedAccess(requesterEmail);
+    const isOwner = String(workspace.ownerId) === requesterUserId;
+    const isCollaborator = collaboratorEmailsFromRaw(workspace.collaboration).includes(requesterEmail);
+    if (!isManager && !isOwner && !isCollaborator) {
+      return res.status(403).json({ message: 'forbidden' });
+    }
 
     return res.json(workspace);
   } catch {
@@ -103,7 +194,7 @@ export async function getWorkspaceStats(req: Request, res: Response) {
       return res.status(401).json({ message: 'unauthorized' });
     }
 
-    const collaboratorEmails = normalizeCollaborators(workspace.collaboration);
+    const collaboratorEmails = collaboratorEmailsFromRaw(workspace.collaboration);
     const requesterEmail = requester.email.toLowerCase();
     const isOwner = String(workspace.ownerId) === auth.userId;
     const isCollaborator = collaboratorEmails.includes(requesterEmail);
@@ -203,8 +294,21 @@ export async function getWorkspaceStats(req: Request, res: Response) {
 // UPDATE workspace
 export async function updateWorkspace(req: Request, res: Response) {
   try {
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    if (!(await canUploadFiles(auth?.email))) {
+      return res.status(403).json({ message: 'write access denied' });
+    }
+
     const { id } = req.params as ObjectIdParams;
     const { name, color, description, collaboration, pinned } = req.body as Partial<UpdateWorkspaceBody>;
+
+    const missingCollaborators = await getMissingCollaboratorEmails(collaboration);
+    if (missingCollaborators.length > 0) {
+      return res.status(404).json({ message: `users not found: ${missingCollaborators.join(', ')}` });
+    }
+
+    const normalizedCollaboration =
+      collaboration !== undefined ? normalizeCollaborators(collaboration).join(', ') : undefined;
 
     // Build $set and $unset separately so we can clear pinnedAt when unpinning
     const $set: Record<string, unknown> = {};
@@ -213,7 +317,7 @@ export async function updateWorkspace(req: Request, res: Response) {
     if (name !== undefined) $set.name = name;
     if (color !== undefined) $set.color = color;
     if (description !== undefined) $set.description = description;
-    if (collaboration !== undefined) $set.collaboration = collaboration;
+    if (normalizedCollaboration !== undefined) $set.collaboration = normalizedCollaboration;
     if (pinned === true) {
       $set.pinned = true;
       $set.pinnedAt = new Date();
@@ -238,6 +342,11 @@ export async function updateWorkspace(req: Request, res: Response) {
 // DELETE workspace
 export async function deleteWorkspace(req: Request, res: Response) {
   try {
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    if (!(await canUploadFiles(auth?.email))) {
+      return res.status(403).json({ message: 'write access denied' });
+    }
+
     const { id } = req.params as ObjectIdParams;
     const workspace = await WorkspaceModel.findByIdAndDelete(id);
     if (!workspace) return res.status(404).json({ message: 'workspace not found' });
@@ -251,6 +360,11 @@ export async function deleteWorkspace(req: Request, res: Response) {
 // REORDER workspaces — body: { ids: string[] } in desired order
 export async function reorderWorkspaces(req: Request, res: Response) {
   try {
+    const auth = (res as Response<unknown, AuthLocals>).locals.auth;
+    if (!(await canUploadFiles(auth?.email))) {
+      return res.status(403).json({ message: 'write access denied' });
+    }
+
     const { ids } = req.body as { ids: string[] };
 
     if (!Array.isArray(ids) || ids.length === 0) {
