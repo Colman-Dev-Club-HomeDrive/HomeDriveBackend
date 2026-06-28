@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import mongoose from 'mongoose';
-import type { IndexFileBody, RenameFileBody } from '../types/file.types.js';
+import type { IndexFileBody, RenameFileBody, ShareFileBody } from '../types/file.types.js';
 import type { ObjectIdParams } from '../types/common.types.js';
 
 export function validateIndexFile(req: Request, res: Response, next: NextFunction) {
@@ -55,6 +55,17 @@ export function validateRenameFile(req: Request, res: Response, next: NextFuncti
 
   if (name.includes('/') || name.includes('\\')) {
     return res.status(400).json({ message: 'name cannot contain path separators' });
+  }
+
+  return next();
+}
+
+export function validateShareFile(req: Request, res: Response, next: NextFunction) {
+  if (!req.body) return res.status(400).json({ message: 'body is required' });
+
+  const { shareWith } = req.body as Partial<ShareFileBody>;
+  if (typeof shareWith !== 'string') {
+    return res.status(400).json({ message: 'shareWith must be a string' });
   }
 
   return next();

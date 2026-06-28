@@ -13,6 +13,10 @@ export type RenameFileBody = {
   name: string;
 };
 
+export type ShareFileBody = {
+  shareWith: string;
+};
+
 export type ListFilesQuery = {
   workspaceId?: string;
   mediaType?: MediaType;

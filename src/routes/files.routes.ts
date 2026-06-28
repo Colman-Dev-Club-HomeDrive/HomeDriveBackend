@@ -9,9 +9,10 @@ import {
   deleteFile,
   openFile,
   renameFile,
+  shareFile,
   uploadFile,
 } from '../controllers/files.controller.js';
-import { validateFileId, validateIndexFile, validateRenameFile } from '../validators/files.validator.js';
+import { validateFileId, validateIndexFile, validateRenameFile, validateShareFile } from '../validators/files.validator.js';
 import { upload } from '../middleware/upload.middleware.js';
 
 export const filesRouter = Router();
@@ -23,5 +24,6 @@ filesRouter.post('/', validateIndexFile, indexFile);
 filesRouter.get('/:id/download', validateFileId, downloadFile);
 filesRouter.get('/:id', validateFileId, getFileById);
 filesRouter.patch('/:id', validateFileId, validateRenameFile, renameFile);
+filesRouter.patch('/:id/share', validateFileId, validateShareFile, shareFile);
 filesRouter.delete('/:id', validateFileId, deleteFile);
 filesRouter.post('/:id/open', validateFileId, openFile);
