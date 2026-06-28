@@ -12,6 +12,22 @@ type WorkspaceProps = {
   fileCount: number;
   position: number;
   ownerId: Types.ObjectId;
+  statsSnapshot?: {
+    totalFiles: number;
+    totalBytes: number;
+    mediaBreakdown: Array<{
+      mediaType: 'documents' | 'photos' | 'videos' | 'audio';
+      count: number;
+      bytes: number;
+    }>;
+    userBreakdown: Array<{
+      ownerId: string;
+      ownerName: string;
+      files: number;
+      bytes: number;
+    }>;
+    updatedAt: Date;
+  };
 };
 
 export type WorkspaceDocument = HydratedDocument<WorkspaceProps>;
@@ -30,6 +46,41 @@ const WorkspaceSchema = new Schema<WorkspaceProps>(
     fileCount: { type: Number, default: 0 },
     position: { type: Number, default: 0, index: true },
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    statsSnapshot: {
+      type: {
+        totalFiles: { type: Number, default: 0 },
+        totalBytes: { type: Number, default: 0 },
+        mediaBreakdown: {
+          type: [
+            {
+              mediaType: {
+                type: String,
+                enum: ['documents', 'photos', 'videos', 'audio'],
+                required: true,
+              },
+              count: { type: Number, default: 0 },
+              bytes: { type: Number, default: 0 },
+              _id: false,
+            },
+          ],
+          default: [],
+        },
+        userBreakdown: {
+          type: [
+            {
+              ownerId: { type: String, required: true },
+              ownerName: { type: String, required: true },
+              files: { type: Number, default: 0 },
+              bytes: { type: Number, default: 0 },
+              _id: false,
+            },
+          ],
+          default: [],
+        },
+        updatedAt: { type: Date, default: Date.now },
+      },
+      default: null,
+    },
   },
   { timestamps: true, toJSON: { virtuals: true } },
 );
