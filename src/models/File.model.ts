@@ -7,6 +7,8 @@ type FileProps = {
   mimeType: string;
   extension: string;
   isDirectory: boolean;
+  isDeleted: boolean;
+  deletedAt?: Date | null;
   workspaceId?: Types.ObjectId;
   ownerId: Types.ObjectId;
   collaboration?: string;
@@ -22,6 +24,8 @@ const FileSchema = new Schema<FileProps>(
     mimeType: { type: String, required: true },
     extension: { type: String, default: '' },
     isDirectory: { type: Boolean, default: false },
+    isDeleted: { type: Boolean, default: false, index: true },
+    deletedAt: { type: Date, default: null },
     workspaceId: { type: Schema.Types.ObjectId, ref: 'Workspace', index: true },
     ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     collaboration: { type: String, trim: true },
