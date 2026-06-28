@@ -62,6 +62,13 @@ function normalizeCollaborators(rawValue: string): string[] {
   return Array.from(unique);
 }
 
+function activeFileFilter<T extends Record<string, unknown>>(filter: T = {} as T) {
+  return {
+    ...filter,
+    isDeleted: { $ne: true },
+  };
+}
+
 // POST /api/files/upload
 export async function uploadFile(req: Request, res: Response) {
   try {
@@ -195,7 +202,7 @@ export async function indexFile(req: Request, res: Response) {
 
     if (path !== '') {
       // Prevent duplicate indexing of the same path
-      const existing = await FileModel.findOne({ path });
+      const existing = await FileModel.findOne(activeFileFilter({ path }));
       if (existing) {
         return res.status(409).json({ message: 'already indexed', file: existing });
       }
@@ -263,11 +270,21 @@ export async function indexFile(req: Request, res: Response) {
 export async function listFiles(req: Request, res: Response) {
   try {
     const { workspaceId, mediaType } = req.query as ListFilesQuery;
-    const filter = {
+    const filter = activeFileFilter({
       ...(workspaceId ? { workspaceId } : {}),
       ...getMediaFilter(mediaType),
-    };
+    });
     const files = await FileModel.find(filter).sort({ createdAt: -1 });
+    return res.json(files);
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// GET /api/files/trash
+export async function listTrashFiles(_req: Request, res: Response) {
+  try {
+    const files = await FileModel.find({ isDeleted: true }).sort({ deletedAt: -1, updatedAt: -1 });
     return res.json(files);
   } catch {
     return res.status(500).json({ message: 'server error' });
@@ -281,6 +298,7 @@ export async function getMediaTypeCounts(req: Request, res: Response) {
     const baseMatch = {
       ...(workspaceId ? { workspaceId } : {}),
       isDirectory: false,
+      isDeleted: { $ne: true },
     };
 
     const counts = await FileModel.aggregate<MediaTypeCount>([
@@ -322,7 +340,7 @@ export async function getStorageStats(_req: Request, res: Response) {
     const [{ metadataUsedBytes = 0 } = { metadataUsedBytes: 0 }] = await FileModel.aggregate<
       Pick<StorageStatsResponse, 'metadataUsedBytes'>
     >([
-      { $match: { isDirectory: false } },
+      { $match: { isDirectory: false, isDeleted: { $ne: true } } },
       { $group: { _id: null, metadataUsedBytes: { $sum: '$size' } } },
       { $project: { _id: 0, metadataUsedBytes: 1 } },
     ]);
@@ -343,7 +361,7 @@ export async function getStorageStats(_req: Request, res: Response) {
 export async function getFileById(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
-    const file = await FileModel.findById(id);
+    const file = await FileModel.findOne(activeFileFilter({ _id: id }));
     if (!file) return res.status(404).json({ message: 'file not found' });
     return res.json(file);
   } catch {
@@ -355,7 +373,11 @@ export async function getFileById(req: Request, res: Response) {
 export async function deleteFile(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
-    const file = await FileModel.findByIdAndDelete(id);
+    const file = await FileModel.findOneAndUpdate(
+      activeFileFilter({ _id: id }),
+      { isDeleted: true, deletedAt: new Date() },
+      { new: true },
+    );
     if (!file) return res.status(404).json({ message: 'file not found' });
 
     // Keep workspace fileCount accurate
@@ -363,7 +385,47 @@ export async function deleteFile(req: Request, res: Response) {
       await WorkspaceModel.findByIdAndUpdate(file.workspaceId, { $inc: { fileCount: -1 } });
     }
 
-    return res.json({ message: 'file removed' });
+    return res.json({ message: 'file moved to trash' });
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// PATCH /api/files/:id/restore
+export async function restoreFile(req: Request, res: Response) {
+  try {
+    const { id } = req.params as ObjectIdParams;
+    const file = await FileModel.findOneAndUpdate(
+      { _id: id, isDeleted: true },
+      { isDeleted: false, deletedAt: null },
+      { new: true },
+    );
+    if (!file) return res.status(404).json({ message: 'file not found in trash' });
+
+    if (file.workspaceId) {
+      await WorkspaceModel.findByIdAndUpdate(file.workspaceId, { $inc: { fileCount: 1 } });
+    }
+
+    return res.json({ message: 'file restored', file });
+  } catch {
+    return res.status(500).json({ message: 'server error' });
+  }
+}
+
+// DELETE /api/files/:id/permanent
+export async function permanentlyDeleteFile(req: Request, res: Response) {
+  try {
+    const { id } = req.params as ObjectIdParams;
+    const file = await FileModel.findById(id);
+    if (!file) return res.status(404).json({ message: 'file not found' });
+
+    // If the item was not in trash, keep workspace fileCount accurate.
+    if (!file.isDeleted && file.workspaceId) {
+      await WorkspaceModel.findByIdAndUpdate(file.workspaceId, { $inc: { fileCount: -1 } });
+    }
+
+    await FileModel.deleteOne({ _id: id });
+    return res.json({ message: 'file permanently deleted' });
   } catch {
     return res.status(500).json({ message: 'server error' });
   }
@@ -373,7 +435,7 @@ export async function deleteFile(req: Request, res: Response) {
 export async function openFile(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
-    const file = await FileModel.findById(id);
+    const file = await FileModel.findOne(activeFileFilter({ _id: id }));
     if (!file) return res.status(404).json({ message: 'file not found' });
 
     if (!file.path) {
@@ -406,7 +468,7 @@ export async function openFile(req: Request, res: Response) {
 export async function downloadFile(req: Request, res: Response) {
   try {
     const { id } = req.params as ObjectIdParams;
-    const file = await FileModel.findById(id);
+    const file = await FileModel.findOne(activeFileFilter({ _id: id }));
     if (!file) return res.status(404).json({ message: 'file not found' });
 
     if (!file.path) {
@@ -435,7 +497,7 @@ export async function renameFile(req: Request, res: Response) {
     const { name: rawName } = req.body as RenameFileBody;
     const nextName = rawName.trim();
 
-    const file = await FileModel.findById(id);
+    const file = await FileModel.findOne(activeFileFilter({ _id: id }));
     if (!file) return res.status(404).json({ message: 'file not found' });
 
     if (!file.path) {
@@ -461,6 +523,7 @@ export async function renameFile(req: Request, res: Response) {
     const duplicateIndexedPath = await FileModel.findOne({
       _id: { $ne: file._id },
       path: nextPath,
+      isDeleted: { $ne: true },
     });
     if (duplicateIndexedPath) {
       return res.status(409).json({ message: 'another indexed item already uses this path' });
@@ -484,6 +547,7 @@ export async function renameFile(req: Request, res: Response) {
       const descendants = await FileModel.find({
         _id: { $ne: file._id },
         path: { $regex: `^${escapedPath}[\\\\/]` },
+        isDeleted: { $ne: true },
       });
 
       if (descendants.length > 0) {
@@ -509,7 +573,7 @@ export async function shareFile(req: Request, res: Response) {
     const { id } = req.params as ObjectIdParams;
     const { shareWith } = req.body as ShareFileBody;
 
-    const file = await FileModel.findById(id);
+    const file = await FileModel.findOne(activeFileFilter({ _id: id }));
     if (!file) return res.status(404).json({ message: 'file not found' });
 
     const collaborators = normalizeCollaborators(shareWith);
